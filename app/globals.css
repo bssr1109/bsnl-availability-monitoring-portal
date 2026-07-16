@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: #f5f7fa;
+  color: #172033;
+}
+
+input,
+select,
+textarea {
+  min-width: 0;
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
