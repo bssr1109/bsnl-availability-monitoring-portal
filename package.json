@@ -10,7 +10,6 @@
     "sample:excel": "tsx scripts/create-sample-excel.ts"
   },
   "dependencies": {
-    "@next/swc-win32-x64-msvc": "^14.2.33",
     "@supabase/supabase-js": "^2.109.0",
     "@types/node": "^20.14.10",
     "@types/react": "^18.3.3",
