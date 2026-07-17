@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
-import { format, parseISO } from "date-fns";
+import { differenceInMinutes, endOfDay, format, parseISO, startOfMonth } from "date-fns";
 import type { AppState, BtsMasterRecord, OutageIncident, RawAlarmRecord, Site } from "./types";
-import { availabilityForSite } from "./availability";
+import { availabilityForSite, availabilityPercent, mergeIntervals } from "./availability";
 
 const COLUMN_ALIASES: Record<string, string[]> = {
   circle: ["circle", "circle id", "circle i"],
@@ -242,6 +242,72 @@ export function buildSiteReportRows(state: AppState, monthIso = new Date().toISO
   });
 }
 
+export function buildSiteAvailabilityTillDateWorkbook(state: AppState, asOfIso = new Date().toISOString()) {
+  const asOf = parseISO(asOfIso);
+  const start = startOfMonth(asOf);
+  const end = endOfDay(asOf);
+  const totalMinutes = differenceInMinutes(end, start) + 1;
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+
+  const siteSummaries = state.sites.map((site) => {
+    const incidents = monthToDateIncidents(state.outageIncidents, site, startMs, endMs);
+    const downtimeMinutes = mergedDowntimeMinutes(incidents, startMs, endMs);
+    const availability = availabilityPercent(downtimeMinutes, totalMinutes);
+    const master = state.btsMaster.find((item) => item.siteId === site.btsId);
+    const fieldOfficer = state.profiles.find((item) => item.id === site.sdeId);
+    const dayReasons = incidents.map((incident) => reasonForIncident(state, incident)).filter(Boolean);
+    const uniqueReasons = Array.from(new Set(dayReasons));
+
+    return {
+      "As On": format(asOf, "yyyy-MM-dd"),
+      SSA: site.ssa,
+      SDCA: site.sdca,
+      "BTS IP ID": site.btsId,
+      "BTS Name": site.btsName,
+      "Field Officer": fieldOfficer?.name ?? "",
+      "Responsible Staff No": master?.staffNo ?? "",
+      "Responsible Name": master?.name ?? "",
+      "Total Minutes Till Date": totalMinutes,
+      "Downtime Minutes Till Date": downtimeMinutes,
+      "Availability Till Date": availability.toFixed(2),
+      "Less Than 100%": availability < 100 ? "Yes" : "No",
+      "Outage Count": incidents.length,
+      "Reasons If Below 100%": availability < 100 ? uniqueReasons.join(" | ") : ""
+    };
+  });
+
+  const below100SiteIds = new Set(siteSummaries.filter((row) => row["Less Than 100%"] === "Yes").map((row) => row["BTS IP ID"]));
+  const dayWiseReasons = state.outageIncidents
+    .filter((incident) => below100SiteIds.has(incident.btsId))
+    .filter((incident) => inWindow(incident.downTime, startMs, endMs))
+    .map((incident) => {
+      const site = state.sites.find((item) => item.id === incident.siteId);
+      const remark = state.outageRemarks.find((item) => item.incidentId === incident.id);
+      return {
+        Date: incident.outageDate,
+        SDCA: site?.sdca ?? "",
+        "BTS IP ID": site?.btsId ?? incident.btsId,
+        "BTS Name": site?.btsName ?? "",
+        Category: incident.alarmCategory,
+        "Down Time": incident.downTime,
+        "Up Time": incident.upTime,
+        "Duration Minutes": incident.durationMinutes,
+        "Primary Cause": remark?.primaryCause ?? "",
+        "Detailed Reason": remark?.detailedReason ?? "",
+        "Action Taken": remark?.actionTaken ?? "",
+        "Delay Reason": remark?.delayReason ?? "",
+        "Reason Used": reasonForIncident(state, incident)
+      };
+    })
+    .sort((a, b) => `${a["BTS IP ID"]}-${a.Date}-${a["Down Time"]}`.localeCompare(`${b["BTS IP ID"]}-${b.Date}-${b["Down Time"]}`));
+
+  return {
+    "Site Availability": siteSummaries,
+    "Day-wise Reasons": dayWiseReasons
+  };
+}
+
 export function buildProposalRows(state: AppState) {
   return state.improvementProposals.map((proposal) => {
     const site = state.sites.find((item) => item.id === proposal.siteId);
@@ -300,6 +366,36 @@ export function buildMasterRows(state: AppState) {
       "Updated At": master.updatedAt
     };
   });
+}
+
+function monthToDateIncidents(incidents: OutageIncident[], site: Site, startMs: number, endMs: number) {
+  return incidents.filter((incident) => incident.siteId === site.id && inWindow(incident.downTime, startMs, endMs));
+}
+
+function inWindow(iso: string, startMs: number, endMs: number) {
+  const time = Date.parse(iso);
+  return time >= startMs && time <= endMs;
+}
+
+function mergedDowntimeMinutes(incidents: OutageIncident[], startMs: number, endMs: number) {
+  const intervals = incidents.map((incident) => {
+    const start = new Date(Math.max(Date.parse(incident.downTime), startMs)).toISOString();
+    const end = new Date(Math.min(Date.parse(incident.upTime), endMs)).toISOString();
+    return { start, end };
+  });
+  return mergeIntervals(intervals).reduce((sum, item) => sum + item.minutes, 0);
+}
+
+function reasonForIncident(state: AppState, incident: OutageIncident) {
+  const remark = state.outageRemarks.find((item) => item.incidentId === incident.id);
+  return [
+    remark?.primaryCause,
+    remark?.detailedReason,
+    remark?.actionTaken,
+    remark?.delayReason,
+    !remark ? incident.alarmCategory : "",
+    !remark ? incident.description : ""
+  ].filter(Boolean).join(" - ");
 }
 
 export function buildSingleSiteWorkbook(state: AppState, siteId: string): Record<string, Record<string, unknown>[]> {
