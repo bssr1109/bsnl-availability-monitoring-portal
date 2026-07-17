@@ -40,6 +40,7 @@ import {
   buildDetailedOutageRows,
   buildMasterRows,
   buildProposalRows,
+  buildSiteAvailabilityTillDateWorkbook,
   buildSiteReportRows,
   buildSingleSiteWorkbook,
   downloadWorkbook,
@@ -932,6 +933,7 @@ function Reports({ state, sites }: { state: AppState; sites: Site[] }) {
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <ExportButton label="Detailed Outage Remarks" onClick={() => downloadWorkbook("detailed-outage-remarks.xlsx", { "Detailed Outage Remarks": buildDetailedOutageRows(state) })} />
         <ExportButton label="Site-wise Consolidated Report" onClick={() => downloadWorkbook("site-wise-consolidated-report.xlsx", { "Site Report": buildSiteReportRows(state) })} />
+        <ExportButton label="Availability Till Date Reasons" onClick={() => downloadWorkbook("availability-till-date-reasons.xlsx", buildSiteAvailabilityTillDateWorkbook(state))} />
         <ExportButton label="Pending Remarks" onClick={() => downloadWorkbook("pending-remarks.xlsx", { Pending: buildDetailedOutageRows(state).filter((row) => Number(row["Duration Minutes"]) > REMARK_REQUIRED_MINUTES && !row["Primary Cause"]) })} />
         <ExportButton label="Improvement Proposals" onClick={() => downloadWorkbook("improvement-proposals.xlsx", { "Improvement Proposals": buildProposalRows(state) })} />
         <ExportButton label="EOD Compliance" onClick={() => downloadWorkbook("eod-compliance.xlsx", { EOD: state.eodSubmissions as unknown as Record<string, unknown>[] })} />
