@@ -213,6 +213,7 @@ export const PRIMARY_CAUSES = [
   "Router or switch failure",
   "BTS equipment fault",
   "BTS hang",
+  "TCS Enodeb band/sector rebooted",
   "VSAT failure",
   "Planned maintenance",
   "Road work",
