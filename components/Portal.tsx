@@ -553,9 +553,10 @@ function RemarksPanel(props: {
   const { state, incidents, selectedIncident, selectedSite, setSelectedIncidentId, activeUser, persist, setToast } = props;
   const existingRemark = selectedIncident ? state.outageRemarks.find((item) => item.incidentId === selectedIncident.id) : undefined;
   const existingProposal = selectedIncident ? state.improvementProposals.find((item) => item.incidentId === selectedIncident.id) : undefined;
-  const availability = selectedSite ? availabilityForSite(selectedSite, state.outageIncidents, new Date().toISOString()) : undefined;
+  const selectedMonthIso = selectedIncident?.downTime ?? new Date().toISOString();
+  const availability = selectedSite ? availabilityForSite(selectedSite, state.outageIncidents, selectedMonthIso) : undefined;
   const mandatoryProposal = Boolean(selectedIncident && selectedSite && isProposalMandatory(state, selectedIncident, selectedSite));
-  const monthIncidents = selectedSite ? currentMonthIncidents(state, selectedSite) : [];
+  const monthIncidents = selectedSite ? incidentsForMonth(state, selectedSite, selectedMonthIso) : [];
   const monthlyDurationTotal = monthIncidents.reduce((sum, item) => sum + actualIncidentMinutes(item), 0);
   const selectedDuration = selectedIncident ? actualIncidentMinutes(selectedIncident) : 0;
   const [remark, setRemark] = useState<Partial<OutageRemark>>(existingRemark ?? {});
@@ -966,9 +967,16 @@ function Reports({ state, sites }: { state: AppState; sites: Site[] }) {
   );
 }
 
-function currentMonthIncidents(state: AppState, site: Site) {
-  const monthKey = format(new Date(), "yyyy-MM");
-  return state.outageIncidents.filter((item) => item.siteId === site.id && item.downTime.startsWith(monthKey));
+function incidentsForMonth(state: AppState, site: Site, monthIso: string) {
+  const monthKey = format(parseISO(monthIso), "yyyy-MM");
+  return state.outageIncidents.filter((item) => {
+    if (item.siteId !== site.id) return false;
+    try {
+      return format(parseISO(item.downTime), "yyyy-MM") === monthKey;
+    } catch {
+      return item.downTime.startsWith(monthKey);
+    }
+  });
 }
 
 function actualIncidentMinutes(incident: OutageIncident) {

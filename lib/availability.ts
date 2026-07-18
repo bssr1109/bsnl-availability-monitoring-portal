@@ -34,9 +34,17 @@ export function mergeIntervals(intervals: Array<{ start: string; end: string }>)
 export function downtimeForSite(siteId: string, incidents: OutageIncident[], monthIso: string) {
   const monthKey = format(parseISO(monthIso), "yyyy-MM");
   const intervals = incidents
-    .filter((incident) => incident.siteId === siteId && incident.downTime.startsWith(monthKey))
+    .filter((incident) => incident.siteId === siteId && sameMonth(incident.downTime, monthKey))
     .map((incident) => ({ start: incident.downTime, end: incident.upTime }));
   return mergeIntervals(intervals).reduce((sum, item) => sum + item.minutes, 0);
+}
+
+function sameMonth(iso: string, monthKey: string) {
+  try {
+    return format(parseISO(iso), "yyyy-MM") === monthKey;
+  } catch {
+    return iso.startsWith(monthKey);
+  }
 }
 
 export function availabilityPercent(downtimeMinutes: number, totalMinutes: number) {
