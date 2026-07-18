@@ -31,7 +31,7 @@ import {
   YAxis
 } from "recharts";
 import { clsx } from "clsx";
-import { format, parseISO } from "date-fns";
+import { differenceInMinutes, format, parseISO } from "date-fns";
 import type { AppState, ImprovementProposal, OutageIncident, OutageRemark, Profile, Site } from "@/lib/types";
 import { IMPROVEMENT_TYPES, PRIMARY_CAUSES } from "@/lib/types";
 import { getRepository, submitEod, uploadMasterRows, uploadOutageRows, upsertProposal, upsertRemark } from "@/lib/repository";
@@ -555,6 +555,9 @@ function RemarksPanel(props: {
   const existingProposal = selectedIncident ? state.improvementProposals.find((item) => item.incidentId === selectedIncident.id) : undefined;
   const availability = selectedSite ? availabilityForSite(selectedSite, state.outageIncidents, new Date().toISOString()) : undefined;
   const mandatoryProposal = Boolean(selectedIncident && selectedSite && isProposalMandatory(state, selectedIncident, selectedSite));
+  const monthIncidents = selectedSite ? currentMonthIncidents(state, selectedSite) : [];
+  const monthlyDurationTotal = monthIncidents.reduce((sum, item) => sum + actualIncidentMinutes(item), 0);
+  const selectedDuration = selectedIncident ? actualIncidentMinutes(selectedIncident) : 0;
   const [remark, setRemark] = useState<Partial<OutageRemark>>(existingRemark ?? {});
   const [proposal, setProposal] = useState<Partial<ImprovementProposal>>(existingProposal ?? { improvementRequired: mandatoryProposal });
 
@@ -576,7 +579,7 @@ function RemarksPanel(props: {
   const save = () => {
     if (locked) return;
     if (!remarkRequired) return;
-    if (selectedIncident.durationMinutes > 60 && !remark.delayReason) {
+    if (actualIncidentMinutes(selectedIncident) > 60 && !remark.delayReason) {
       alert("Delay reason is mandatory when outage duration exceeds one hour.");
       return;
     }
@@ -655,7 +658,7 @@ function RemarksPanel(props: {
                   <span className="font-medium">{site ? `${site.btsId} - ${site.btsName}` : incident.btsId}</span>
                   {!required ? <span className="rounded bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">No remarks</span> : done ? <CheckCircle2 size={16} className="text-emerald-600" /> : <AlertTriangle size={16} className="text-alert" />}
                 </div>
-                <p className="mt-1 text-xs text-slate-500">{incident.alarmCategory} - {incident.durationMinutes} min - {site?.sdca}</p>
+                <p className="mt-1 text-xs text-slate-500">{incident.alarmCategory} - {actualIncidentMinutes(incident)} min - {site?.sdca}</p>
               </button>
             );
           })}
@@ -675,11 +678,12 @@ function RemarksPanel(props: {
           </div>
           <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <Info label="Alarm" value={`${selectedIncident.alarmCode} - ${selectedIncident.description}`} />
-            <Info label="Down / Up" value={`${format(parseISO(selectedIncident.downTime), "dd MMM HH:mm")} - ${format(parseISO(selectedIncident.upTime), "HH:mm")}`} />
-            <Info label="Duration" value={`${selectedIncident.durationMinutes} minutes`} />
+            <Info label="Down / Up" value={formatDownUp(selectedIncident)} />
+            <Info label="Duration" value={`${selectedDuration} minutes`} />
             <Info label="Availability" value={`${availability?.availability.toFixed(2)}% current - ${availability?.projectedAvailability.toFixed(2)}% projected`} />
-            <Info label="Monthly count" value={state.outageIncidents.filter((item) => item.siteId === selectedSite.id).length} />
-            <Info label="Cumulative downtime" value={`${availability?.downtimeMinutes} minutes`} />
+            <Info label="Monthly count" value={monthIncidents.length} />
+            <Info label="Total duration" value={`${monthlyDurationTotal} minutes`} />
+            <Info label="Availability downtime" value={`${availability?.downtimeMinutes} minutes`} />
             <Info label="Site type/vendor" value={`${selectedSite.siteType} - ${selectedSite.vendor}`} />
             <Info label="98% margin" value={`${Math.round(availability?.remainingMargin ?? 0)} minutes remaining`} />
           </div>
@@ -689,7 +693,7 @@ function RemarksPanel(props: {
           <section className="rounded border border-slate-200 bg-white p-4 shadow-soft">
             <h3 className="font-semibold">No Remarks Required</h3>
             <p className="mt-2 text-sm text-slate-600">
-              This outage duration is {selectedIncident.durationMinutes} minutes. Remarks are required only when downtime is greater than {REMARK_REQUIRED_MINUTES} minutes.
+              This outage duration is {selectedDuration} minutes. Remarks are required only when downtime is greater than {REMARK_REQUIRED_MINUTES} minutes.
             </p>
           </section>
         ) : (
@@ -706,7 +710,7 @@ function RemarksPanel(props: {
             <Field label="Team or vendor" value={remark.teamOrVendor} onChange={(value) => setRemark({ ...remark, teamOrVendor: value })} />
             <Select label="Temporary or permanent restoration" value={remark.restorationType} options={["Permanent", "Temporary"]} onChange={(value) => setRemark({ ...remark, restorationType: value as OutageRemark["restorationType"] })} />
             <Field label="Material or spare used" value={remark.materialUsed} onChange={(value) => setRemark({ ...remark, materialUsed: value })} />
-            <Field label="Delay reason" value={remark.delayReason} onChange={(value) => setRemark({ ...remark, delayReason: value })} required={selectedIncident.durationMinutes > 60} />
+            <Field label="Delay reason" value={remark.delayReason} onChange={(value) => setRemark({ ...remark, delayReason: value })} required={selectedDuration > 60} />
             <Field label="Responsibility" value={remark.responsibility} onChange={(value) => setRemark({ ...remark, responsibility: value })} />
             <Field label="Preventive action" value={remark.preventiveAction} onChange={(value) => setRemark({ ...remark, preventiveAction: value })} />
             <Field label="Supporting document or photo placeholder" value={remark.attachmentPlaceholder} onChange={(value) => setRemark({ ...remark, attachmentPlaceholder: value })} />
@@ -958,6 +962,24 @@ function Reports({ state, sites }: { state: AppState; sites: Site[] }) {
   );
 }
 
+function currentMonthIncidents(state: AppState, site: Site) {
+  const monthKey = format(new Date(), "yyyy-MM");
+  return state.outageIncidents.filter((item) => item.siteId === site.id && item.downTime.startsWith(monthKey));
+}
+
+function actualIncidentMinutes(incident: OutageIncident) {
+  const down = parseISO(incident.downTime);
+  const up = parseISO(incident.upTime);
+  const computed = differenceInMinutes(up, down);
+  return computed > 0 ? computed : incident.durationMinutes;
+}
+
+function formatDownUp(incident: OutageIncident) {
+  const down = parseISO(incident.downTime);
+  const up = parseISO(incident.upTime);
+  return `${format(down, "dd MMM yyyy HH:mm")} - ${format(up, "dd MMM yyyy HH:mm")}`;
+}
+
 function getStats(state: AppState, sites: Site[], incidents: OutageIncident[]) {
   const today = new Date().toISOString().slice(0, 10);
   const siteIds = new Set(sites.map((site) => site.id));
@@ -987,11 +1009,11 @@ function isProposalMandatory(state: AppState, incident: OutageIncident, site: Si
   const availability = availabilityForSite(site, state.outageIncidents, new Date().toISOString());
   const sameCauseRepeats = siteIncidents.filter((item) => item.alarmCategory === incident.alarmCategory).length >= 2;
   const batteryIssue = site.batteryBackupHours < 2.5 && incident.alarmCategory === "Power";
-  return availability.availability < 98 || siteIncidents.length >= 3 || incident.durationMinutes > 240 || batteryIssue || site.transmissionPaths === 1 || sameCauseRepeats || site.critical;
+  return availability.availability < 98 || siteIncidents.length >= 3 || actualIncidentMinutes(incident) > 240 || batteryIssue || site.transmissionPaths === 1 || sameCauseRepeats || site.critical;
 }
 
 function needsRemark(incident: OutageIncident) {
-  return incident.durationMinutes > REMARK_REQUIRED_MINUTES;
+  return actualIncidentMinutes(incident) > REMARK_REQUIRED_MINUTES;
 }
 
 function validateEod(state: AppState, activeUser: Profile, incidents: OutageIncident[]) {
@@ -1002,7 +1024,7 @@ function validateEod(state: AppState, activeUser: Profile, incidents: OutageInci
     const proposal = state.improvementProposals.find((item) => item.incidentId === incident.id);
     if (!remark) errors.push(`Remarks pending for ${incident.btsId}`);
     if (incident.major && !remark?.detailedReason) errors.push(`Detailed reason missing for major outage ${incident.btsId}`);
-    if (incident.durationMinutes > 60 && !remark?.delayReason) errors.push(`Delay reason missing for ${incident.btsId}`);
+    if (actualIncidentMinutes(incident) > 60 && !remark?.delayReason) errors.push(`Delay reason missing for ${incident.btsId}`);
     if (remark?.restorationType === "Temporary" && !remark.furtherActionForTemporary) errors.push(`Temporary restoration further action missing for ${incident.btsId}`);
     const site = state.sites.find((item) => item.id === incident.siteId);
     if (site && isProposalMandatory(state, incident, site) && !proposal) errors.push(`Improvement proposal assessment missing for ${incident.btsId}`);
