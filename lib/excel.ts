@@ -56,7 +56,8 @@ export function normalizeRows(rows: Record<string, unknown>[], batchId: string):
     };
     const downTime = coerceDate(pick("downTime"));
     const upTime = coerceDate(pick("upTime"));
-    const duration = Number(pick("duration")) || Math.max(0, (Date.parse(upTime) - Date.parse(downTime)) / 60000);
+    const computedDuration = Math.max(0, (Date.parse(upTime) - Date.parse(downTime)) / 60000);
+    const duration = computedDuration || Number(pick("duration")) || 0;
     const description = [pick("description"), pick("additionalInfo"), pick("faultType")].filter(Boolean).join(" - ");
     return {
       id: `raw-${batchId}-${index + 1}`,
@@ -211,6 +212,7 @@ export function buildSiteReportRows(state: AppState, monthIso = new Date().toISO
     const master = state.btsMaster.find((item) => item.siteId === site.btsId);
     const causes = incidents.map((item) => item.alarmCategory);
     const mainCause = causes.sort((a, b) => causes.filter((c) => c === b).length - causes.filter((c) => c === a).length)[0] ?? "";
+    const totalDuration = incidents.reduce((sum, item) => sum + item.durationMinutes, 0);
     const downtimeBy = (category: string) => incidents.filter((item) => item.alarmCategory === category).reduce((sum, item) => sum + item.durationMinutes, 0);
     return {
       SSA: site.ssa,
@@ -218,8 +220,10 @@ export function buildSiteReportRows(state: AppState, monthIso = new Date().toISO
       "BTS IP ID": site.btsId,
       "BTS Name": site.btsName,
       "Number of Outages": incidents.length,
-      "Total Downtime Minutes": availability.downtimeMinutes,
-      "Total Downtime HH:MM": `${Math.floor(availability.downtimeMinutes / 60)}:${String(availability.downtimeMinutes % 60).padStart(2, "0")}`,
+      "Total Duration Minutes": totalDuration,
+      "Total Duration HH:MM": `${Math.floor(totalDuration / 60)}:${String(totalDuration % 60).padStart(2, "0")}`,
+      "Availability Downtime Minutes": availability.downtimeMinutes,
+      "Availability Downtime HH:MM": `${Math.floor(availability.downtimeMinutes / 60)}:${String(availability.downtimeMinutes % 60).padStart(2, "0")}`,
       "Longest Outage": Math.max(0, ...incidents.map((item) => item.durationMinutes)),
       "First Outage": incidents[0]?.downTime ?? "",
       "Last Outage": incidents[incidents.length - 1]?.downTime ?? "",
