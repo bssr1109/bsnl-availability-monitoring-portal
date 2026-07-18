@@ -579,6 +579,10 @@ function RemarksPanel(props: {
   const save = () => {
     if (locked) return;
     if (!remarkRequired) return;
+    if (!remark.primaryCause) {
+      alert("Select primary cause before saving remarks.");
+      return;
+    }
     if (actualIncidentMinutes(selectedIncident) > 60 && !remark.delayReason) {
       alert("Delay reason is mandatory when outage duration exceeds one hour.");
       return;
@@ -587,7 +591,7 @@ function RemarksPanel(props: {
       id: existingRemark?.id ?? `remark-${selectedIncident.id}`,
       incidentId: selectedIncident.id,
       sdeId: selectedSite.sdeId,
-      primaryCause: remark.primaryCause ?? PRIMARY_CAUSES[0],
+      primaryCause: remark.primaryCause,
       detailedReason: remark.detailedReason ?? "",
       faultLocation: remark.faultLocation ?? "",
       actionTaken: remark.actionTaken ?? "",
@@ -701,7 +705,7 @@ function RemarksPanel(props: {
         <section className="rounded border border-slate-200 bg-white p-4 shadow-soft">
           <h3 className="font-semibold">Outage Remarks</h3>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <Select label="Primary cause" value={remark.primaryCause} options={[...PRIMARY_CAUSES]} onChange={(value) => setRemark({ ...remark, primaryCause: value })} />
+            <Select label="Primary cause" value={remark.primaryCause} options={[...PRIMARY_CAUSES].sort((a, b) => a.localeCompare(b))} onChange={(value) => setRemark({ ...remark, primaryCause: value })} placeholder="Select reason" />
             <Field label="Exact fault location" value={remark.faultLocation} onChange={(value) => setRemark({ ...remark, faultLocation: value })} />
             <Area label="Detailed reason" value={remark.detailedReason} onChange={(value) => setRemark({ ...remark, detailedReason: value })} required={selectedIncident.major} />
             <Area label="Action taken" value={remark.actionTaken} onChange={(value) => setRemark({ ...remark, actionTaken: value })} />
@@ -1023,6 +1027,7 @@ function validateEod(state: AppState, activeUser: Profile, incidents: OutageInci
     const remark = state.outageRemarks.find((item) => item.incidentId === incident.id);
     const proposal = state.improvementProposals.find((item) => item.incidentId === incident.id);
     if (!remark) errors.push(`Remarks pending for ${incident.btsId}`);
+    if (remark && !remark.primaryCause) errors.push(`Primary cause missing for ${incident.btsId}`);
     if (incident.major && !remark?.detailedReason) errors.push(`Detailed reason missing for major outage ${incident.btsId}`);
     if (actualIncidentMinutes(incident) > 60 && !remark?.delayReason) errors.push(`Delay reason missing for ${incident.btsId}`);
     if (remark?.restorationType === "Temporary" && !remark.furtherActionForTemporary) errors.push(`Temporary restoration further action missing for ${incident.btsId}`);
@@ -1052,11 +1057,12 @@ function Area({ label, value, onChange, required }: { label: string; value: unkn
   );
 }
 
-function Select({ label, value, options, onChange }: { label: string; value: unknown; options: string[]; onChange: (value: string) => void }) {
+function Select({ label, value, options, onChange, placeholder }: { label: string; value: unknown; options: string[]; onChange: (value: string) => void; placeholder?: string }) {
   return (
     <label className="text-sm">
       <span className="mb-1 block font-medium text-slate-700">{label}</span>
-      <select value={String(value ?? options[0] ?? "")} onChange={(event) => onChange(event.target.value)} className="w-full rounded border border-slate-200 px-3 py-2">
+      <select value={String(value ?? (placeholder ? "" : options[0] ?? ""))} onChange={(event) => onChange(event.target.value)} className="w-full rounded border border-slate-200 px-3 py-2">
+        {placeholder && <option value="">{placeholder}</option>}
         {options.map((option) => <option key={option}>{option}</option>)}
       </select>
     </label>
