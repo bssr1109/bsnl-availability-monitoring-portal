@@ -17,9 +17,9 @@ const COLUMN_ALIASES: Record<string, string[]> = {
   duration: ["dur", "duration", "duration minutes", "outage duration"],
   alarmCode: ["alarm c", "alarm code", "alarm"],
   vendor: ["vendor name", "vendor", "vend"],
-  description: ["descrip", "description", "alarm description"],
-  additionalInfo: ["addl info", "addi in", "additional info", "additional"],
-  faultType: ["fault ty", "fault type"]
+  description: ["descrip", "descri", "desc", "description", "alarm description"],
+  additionalInfo: ["addl info", "addl in", "addi in", "addi info", "additional info", "additional", "remark", "remarks"],
+  faultType: ["fault ty", "fault type", "fault"]
 };
 
 function norm(value: string) {
@@ -192,6 +192,7 @@ export function buildDetailedOutageRows(state: AppState) {
       Vendor: site?.vendor,
       "Alarm Code": incident.alarmCode,
       Category: incident.alarmCategory,
+      "Uploaded Description": incident.description,
       "Down Time": incident.downTime,
       "Up Time": incident.upTime,
       "Duration Minutes": incident.durationMinutes,
@@ -300,6 +301,7 @@ export function buildSiteAvailabilityTillDateWorkbook(state: AppState, asOfIso =
         "BTS IP ID": site?.btsId ?? incident.btsId,
         "BTS Name": site?.btsName ?? "",
         Category: incident.alarmCategory,
+        "Uploaded Description": incident.description,
         "Down Time": incident.downTime,
         "Up Time": incident.upTime,
         "Duration Minutes": incident.durationMinutes,

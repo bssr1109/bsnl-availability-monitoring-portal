@@ -67,6 +67,24 @@ function roleLabel(profile: Profile) {
   return profile.role;
 }
 
+function normalizedSdca(value?: string) {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function allowedSdcasForUser(state: AppState, user: Profile) {
+  const allowed = new Set<string>();
+  if (user.sdca) allowed.add(normalizedSdca(user.sdca));
+  state.sdeSdcaMappings.filter((mapping) => mapping.profileId === user.id).forEach((mapping) => allowed.add(normalizedSdca(mapping.sdca)));
+  return allowed;
+}
+
+function canViewSite(state: AppState, user: Profile, site: Site) {
+  if (user.role !== "SDE") return true;
+  const siteSdca = normalizedSdca(site.sdca);
+  if (siteSdca && siteSdca !== "unmapped") return allowedSdcasForUser(state, user).has(siteSdca);
+  return site.sdeId === user.id;
+}
+
 export default function Portal() {
   const [state, setState] = useState<AppState | null>(null);
   const [activeUserId, setActiveUserId] = useState("admin-1");
@@ -89,7 +107,7 @@ export default function Portal() {
   const activeUser = state?.profiles.find((profile) => profile.id === activeUserId) ?? state?.profiles[0];
   const visibleSites = useMemo(() => {
     if (!state || !activeUser) return [];
-    if (activeUser.role === "SDE") return state.sites.filter((site) => site.sdeId === activeUser.id);
+    if (activeUser.role === "SDE") return state.sites.filter((site) => canViewSite(state, activeUser, site));
     return state.sites;
   }, [state, activeUser]);
 
@@ -668,6 +686,7 @@ function RemarksPanel(props: {
                   {!required ? <span className="rounded bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">No remarks</span> : done ? <CheckCircle2 size={16} className="text-emerald-600" /> : <AlertTriangle size={16} className="text-alert" />}
                 </div>
                 <p className="mt-1 text-xs text-slate-500">{incident.alarmCategory} - {actualIncidentMinutes(incident)} min - {site?.sdca}</p>
+                {incident.description && <p className="mt-1 truncate text-xs text-slate-500">{incident.description}</p>}
               </button>
             );
           })}
@@ -686,7 +705,8 @@ function RemarksPanel(props: {
             </span>
           </div>
           <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-            <Info label="Alarm" value={`${selectedIncident.alarmCode} - ${selectedIncident.description}`} />
+            <Info label="Alarm" value={selectedIncident.alarmCode || "-"} />
+            <Info label="Uploaded description" value={selectedIncident.description || "No description in upload"} />
             <Info label="Down / Up" value={formatDownUp(selectedIncident)} />
             <Info label="Duration" value={`${selectedDuration} minutes`} />
             <Info label="Availability" value={`${availability?.availability.toFixed(2)}% current - ${availability?.projectedAvailability.toFixed(2)}% projected`} />

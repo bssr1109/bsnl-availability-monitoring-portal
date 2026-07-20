@@ -226,9 +226,9 @@ function mergeUploadedSites(state: AppState, records: RawAlarmRecord[]): Site[] 
     if (!item.btsId) continue;
 
     const sdca = item.sdca || "Unmapped";
-    const sde = state.profiles.find((profile) => profile.role === "SDE" && profile.sdca?.toLowerCase() === sdca.toLowerCase());
-    const fallbackSde = state.profiles.find((profile) => profile.role === "SDE");
+    const sde = fieldOfficerForSdca(state, sdca);
     const existing = sitesByBts.get(item.btsId);
+    const canPreserveExistingOfficer = sdca.toLowerCase() === "unmapped";
 
     sitesByBts.set(item.btsId, {
       id: existing?.id ?? newId(),
@@ -240,7 +240,7 @@ function mergeUploadedSites(state: AppState, records: RawAlarmRecord[]): Site[] 
       technology: item.technology || "Unknown",
       siteType: item.siteType || "Unknown",
       vendor: item.vendor || "Unknown",
-      sdeId: sde?.id ?? existing?.sdeId ?? fallbackSde?.id ?? "",
+      sdeId: sde?.id ?? (canPreserveExistingOfficer ? existing?.sdeId ?? "" : ""),
       critical: existing?.critical ?? false,
       batteryBackupHours: existing?.batteryBackupHours ?? 0,
       transmissionPaths: existing?.transmissionPaths ?? 1
@@ -248,6 +248,13 @@ function mergeUploadedSites(state: AppState, records: RawAlarmRecord[]): Site[] 
   }
 
   return Array.from(sitesByBts.values());
+}
+
+function fieldOfficerForSdca(state: AppState, sdca: string) {
+  const normalized = sdca.trim().toLowerCase();
+  const mappedProfileId = state.sdeSdcaMappings.find((mapping) => mapping.sdca.trim().toLowerCase() === normalized)?.profileId;
+  if (mappedProfileId) return state.profiles.find((profile) => profile.id === mappedProfileId && profile.role === "SDE");
+  return state.profiles.find((profile) => profile.role === "SDE" && profile.sdca?.trim().toLowerCase() === normalized);
 }
 
 export function upsertRemark(state: AppState, remark: OutageRemark) {
