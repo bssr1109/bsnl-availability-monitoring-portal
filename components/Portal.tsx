@@ -275,8 +275,8 @@ function Dashboard({
   const cards = [
     [`Total outages ${latestLabel}`, stats.outagesLatestDay],
     [`Total downtime ${latestLabel}`, `${stats.downtimeLatestDay} min`],
-    ["Remarks completed", stats.remarksCompleted],
-    ["Remarks pending", stats.remarksPending],
+    [`Remarks completed ${latestLabel}`, stats.remarksCompleted],
+    [`Remarks pending ${latestLabel}`, stats.remarksPending],
     ["Major outages", stats.majorOutages],
     ["Proposals required", stats.proposalsRequired],
     ["Proposals submitted", stats.proposalsSubmitted],
@@ -293,6 +293,37 @@ function Dashboard({
             <p className="mt-2 text-2xl font-semibold text-ink">{value}</p>
           </div>
         ))}
+      </section>
+
+      <section className="rounded border border-slate-200 bg-white p-4 shadow-soft">
+        <h2 className="font-semibold">Day-wise Remarks</h2>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[520px] text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+              <tr>
+                <th className="p-2">Date</th>
+                <th className="p-2">Required</th>
+                <th className="p-2">Completed</th>
+                <th className="p-2">Pending</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.dayWiseRemarks.map((row) => (
+                <tr key={row.date} className="border-t border-slate-100">
+                  <td className="p-2 font-semibold">{format(parseISO(row.date), "dd MMM yyyy")}</td>
+                  <td className="p-2">{row.required}</td>
+                  <td className="p-2 text-emerald-700">{row.completed}</td>
+                  <td className={clsx("p-2 font-semibold", row.pending > 0 ? "text-alert" : "text-emerald-700")}>{row.pending}</td>
+                </tr>
+              ))}
+              {stats.dayWiseRemarks.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="p-3 text-sm text-slate-500">No remark-required outages.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
@@ -1038,6 +1069,19 @@ function getStats(state: AppState, sites: Site[], incidents: OutageIncident[]) {
   const latestDayIncidents = latestOutageDate ? incidents.filter((item) => item.outageDate === latestOutageDate) : [];
   const remarkRequiredIncidents = latestDayIncidents.filter(needsRemark);
   const remarksCompleted = remarkRequiredIncidents.filter((incident) => state.outageRemarks.some((remark) => remark.incidentId === incident.id)).length;
+  const dayWiseRemarks = Array.from(
+    incidents
+      .filter(needsRemark)
+      .reduce((acc, incident) => {
+        const row = acc.get(incident.outageDate) ?? { date: incident.outageDate, required: 0, completed: 0, pending: 0 };
+        row.required += 1;
+        if (state.outageRemarks.some((remark) => remark.incidentId === incident.id)) row.completed += 1;
+        row.pending = row.required - row.completed;
+        acc.set(incident.outageDate, row);
+        return acc;
+      }, new Map<string, { date: string; required: number; completed: number; pending: number }>())
+      .values()
+  ).sort((a, b) => b.date.localeCompare(a.date));
   const proposalNeeded = latestDayIncidents.filter((incident) => {
     const site = state.sites.find((item) => item.id === incident.siteId);
     return site ? isProposalMandatory(state, incident, site) : false;
@@ -1048,6 +1092,7 @@ function getStats(state: AppState, sites: Site[], incidents: OutageIncident[]) {
     downtimeLatestDay: latestDayIncidents.reduce((sum, item) => sum + item.durationMinutes, 0),
     remarksCompleted,
     remarksPending: remarkRequiredIncidents.length - remarksCompleted,
+    dayWiseRemarks,
     majorOutages: latestDayIncidents.filter((item) => item.major).length,
     proposalsRequired: proposalNeeded,
     proposalsSubmitted: state.improvementProposals.filter((item) => siteIds.has(item.siteId) && latestDayIncidents.some((incident) => incident.id === item.incidentId)).length,
