@@ -85,6 +85,14 @@ function canViewSite(state: AppState, user: Profile, site: Site) {
   return site.sdeId === user.id;
 }
 
+function sortIncidentsDayWise(incidents: OutageIncident[]) {
+  return [...incidents].sort((a, b) => {
+    const dateCompare = b.outageDate.localeCompare(a.outageDate);
+    if (dateCompare !== 0) return dateCompare;
+    return Date.parse(b.downTime) - Date.parse(a.downTime);
+  });
+}
+
 export default function Portal() {
   const [state, setState] = useState<AppState | null>(null);
   const [activeUserId, setActiveUserId] = useState("admin-1");
@@ -114,11 +122,13 @@ export default function Portal() {
   const visibleIncidents = useMemo(() => {
     if (!state) return [];
     const siteIds = new Set(visibleSites.map((site) => site.id));
-    return state.outageIncidents.filter((incident) => siteIds.has(incident.siteId));
+    return sortIncidentsDayWise(state.outageIncidents.filter((incident) => siteIds.has(incident.siteId)));
   }, [state, visibleSites]);
 
   useEffect(() => {
-    if (!selectedIncidentId && visibleIncidents[0]) setSelectedIncidentId(visibleIncidents[0].id);
+    if (visibleIncidents[0] && (!selectedIncidentId || !visibleIncidents.some((incident) => incident.id === selectedIncidentId))) {
+      setSelectedIncidentId(visibleIncidents[0].id);
+    }
   }, [selectedIncidentId, visibleIncidents]);
 
   function persist(next: AppState) {
@@ -583,6 +593,7 @@ function RemarksPanel(props: {
   const selectedDuration = selectedIncident ? actualIncidentMinutes(selectedIncident) : 0;
   const [remark, setRemark] = useState<Partial<OutageRemark>>(existingRemark ?? {});
   const [proposal, setProposal] = useState<Partial<ImprovementProposal>>(existingProposal ?? { improvementRequired: mandatoryProposal });
+  let lastTaskDate = "";
 
   useEffect(() => {
     setRemark(existingRemark ?? {});
@@ -624,7 +635,7 @@ function RemarksPanel(props: {
       restorationType: remark.restorationType ?? "Permanent",
       materialUsed: remark.materialUsed ?? "",
       delayReason: remark.delayReason ?? "",
-      responsibility: remark.responsibility ?? "BSNL",
+      responsibility: remark.responsibility ?? "",
       preventiveAction: remark.preventiveAction ?? "",
       attachmentPlaceholder: remark.attachmentPlaceholder ?? "",
       furtherActionForTemporary: remark.furtherActionForTemporary ?? "",
@@ -675,19 +686,23 @@ function RemarksPanel(props: {
             const site = state.sites.find((item) => item.id === incident.siteId);
             const done = state.outageRemarks.some((item) => item.incidentId === incident.id);
             const required = needsRemark(incident);
+            const showDateHeader = incident.outageDate !== lastTaskDate;
+            lastTaskDate = incident.outageDate;
             return (
-              <button
-                key={incident.id}
-                onClick={() => setSelectedIncidentId(incident.id)}
-                className={clsx("w-full rounded border p-3 text-left text-sm", incident.id === selectedIncident.id ? "border-bsnl bg-blue-50" : "border-slate-200 bg-white")}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{site ? `${site.btsId} - ${site.btsName}` : incident.btsId}</span>
-                  {!required ? <span className="rounded bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">No remarks</span> : done ? <CheckCircle2 size={16} className="text-emerald-600" /> : <AlertTriangle size={16} className="text-alert" />}
-                </div>
-                <p className="mt-1 text-xs text-slate-500">{incident.alarmCategory} - {actualIncidentMinutes(incident)} min - {site?.sdca}</p>
-                {incident.description && <p className="mt-1 truncate text-xs text-slate-500">{incident.description}</p>}
-              </button>
+              <div key={incident.id} className="space-y-2">
+                {showDateHeader && <div className="sticky top-0 z-10 rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{format(parseISO(incident.downTime), "dd MMM yyyy")}</div>}
+                <button
+                  onClick={() => setSelectedIncidentId(incident.id)}
+                  className={clsx("w-full rounded border p-3 text-left text-sm", incident.id === selectedIncident.id ? "border-bsnl bg-blue-50" : "border-slate-200 bg-white")}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{site ? `${site.btsId} - ${site.btsName}` : incident.btsId}</span>
+                    {!required ? <span className="rounded bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">No remarks</span> : done ? <CheckCircle2 size={16} className="text-emerald-600" /> : <AlertTriangle size={16} className="text-alert" />}
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">{incident.alarmCategory} - {actualIncidentMinutes(incident)} min - {site?.sdca}</p>
+                  {incident.description && <p className="mt-1 truncate text-xs text-slate-500">{incident.description}</p>}
+                </button>
+              </div>
             );
           })}
         </div>
