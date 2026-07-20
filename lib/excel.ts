@@ -110,7 +110,7 @@ function coerceDate(value: string) {
     const serial = Number(cleaned);
     const parsedCode = XLSX.SSF.parse_date_code(serial);
     if (parsedCode) {
-      const parsed = new Date(Date.UTC(parsedCode.y, parsedCode.m - 1, parsedCode.d, parsedCode.H, parsedCode.M, Math.floor(parsedCode.S)));
+      const parsed = new Date(parsedCode.y, parsedCode.m - 1, parsedCode.d, parsedCode.H, parsedCode.M, Math.floor(parsedCode.S));
       if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
     }
     const excelEpoch = Date.UTC(1899, 11, 30);
