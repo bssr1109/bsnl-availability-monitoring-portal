@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { differenceInMinutes, endOfDay, format, parseISO, startOfMonth } from "date-fns";
+import { differenceInMinutes, endOfDay, format, isValid, parse, parseISO, startOfMonth } from "date-fns";
 import type { AppState, BtsMasterRecord, OutageIncident, RawAlarmRecord, Site } from "./types";
 import { availabilityForSite, availabilityPercent, mergeIntervals } from "./availability";
 
@@ -116,6 +116,22 @@ function coerceDate(value: string) {
     const excelEpoch = Date.UTC(1899, 11, 30);
     const parsed = new Date(excelEpoch + serial * 86400000);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+  const knownFormats = [
+    "dd-MM-yyyy HH:mm",
+    "dd-MM-yyyy H:mm",
+    "dd/MM/yyyy HH:mm",
+    "dd/MM/yyyy H:mm",
+    "dd-MM-yy HH:mm",
+    "dd-MM-yy H:mm",
+    "dd/MM/yy HH:mm",
+    "dd/MM/yy H:mm",
+    "yyyy-MM-dd HH:mm",
+    "yyyy/MM/dd HH:mm"
+  ];
+  for (const formatText of knownFormats) {
+    const parsedKnown = parse(cleaned, formatText, new Date());
+    if (isValid(parsedKnown)) return parsedKnown.toISOString();
   }
   const parsed = new Date(cleaned);
   return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
