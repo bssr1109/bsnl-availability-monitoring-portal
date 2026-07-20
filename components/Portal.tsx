@@ -271,9 +271,10 @@ function Dashboard({
   const today = new Date().toISOString().slice(0, 10);
   const eod = state.eodSubmissions.find((item) => item.sdeId === activeUser.id && item.date === today);
   const eodLocked = Boolean(eod?.locked);
+  const latestLabel = stats.latestOutageDate ? format(parseISO(stats.latestOutageDate), "dd MMM yyyy") : "latest day";
   const cards = [
-    ["Total outages today", stats.outagesToday],
-    ["Total downtime today", `${stats.downtimeToday} min`],
+    [`Total outages ${latestLabel}`, stats.outagesLatestDay],
+    [`Total downtime ${latestLabel}`, `${stats.downtimeLatestDay} min`],
     ["Remarks completed", stats.remarksCompleted],
     ["Remarks pending", stats.remarksPending],
     ["Major outages", stats.majorOutages],
@@ -1032,23 +1033,24 @@ function formatDownUp(incident: OutageIncident) {
 }
 
 function getStats(state: AppState, sites: Site[], incidents: OutageIncident[]) {
-  const today = new Date().toISOString().slice(0, 10);
+  const latestOutageDate = incidents.reduce((latest, incident) => (incident.outageDate > latest ? incident.outageDate : latest), "");
   const siteIds = new Set(sites.map((site) => site.id));
-  const todaysIncidents = incidents.filter((item) => item.outageDate === today);
-  const remarkRequiredIncidents = incidents.filter(needsRemark);
+  const latestDayIncidents = latestOutageDate ? incidents.filter((item) => item.outageDate === latestOutageDate) : [];
+  const remarkRequiredIncidents = latestDayIncidents.filter(needsRemark);
   const remarksCompleted = remarkRequiredIncidents.filter((incident) => state.outageRemarks.some((remark) => remark.incidentId === incident.id)).length;
-  const proposalNeeded = incidents.filter((incident) => {
+  const proposalNeeded = latestDayIncidents.filter((incident) => {
     const site = state.sites.find((item) => item.id === incident.siteId);
     return site ? isProposalMandatory(state, incident, site) : false;
   }).length;
   return {
-    outagesToday: todaysIncidents.length,
-    downtimeToday: todaysIncidents.reduce((sum, item) => sum + item.durationMinutes, 0),
+    latestOutageDate,
+    outagesLatestDay: latestDayIncidents.length,
+    downtimeLatestDay: latestDayIncidents.reduce((sum, item) => sum + item.durationMinutes, 0),
     remarksCompleted,
     remarksPending: remarkRequiredIncidents.length - remarksCompleted,
-    majorOutages: incidents.filter((item) => item.major).length,
+    majorOutages: latestDayIncidents.filter((item) => item.major).length,
     proposalsRequired: proposalNeeded,
-    proposalsSubmitted: state.improvementProposals.filter((item) => siteIds.has(item.siteId)).length,
+    proposalsSubmitted: state.improvementProposals.filter((item) => siteIds.has(item.siteId) && latestDayIncidents.some((incident) => incident.id === item.incidentId)).length,
     belowTarget: sites.filter((site) => availabilityForSite(site, state.outageIncidents, new Date().toISOString()).availability < 98).length,
     projectedBelowTarget: sites.filter((site) => availabilityForSite(site, state.outageIncidents, new Date().toISOString()).projectedAvailability < 98).length
   };
