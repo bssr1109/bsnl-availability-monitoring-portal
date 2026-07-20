@@ -110,7 +110,7 @@ export class SupabaseRepository implements DataRepository {
     await this.upsert("bts_master", uniqueRows(state.btsMaster.map(toBtsMaster), "site_id"), "site_id");
     await this.upsert("upload_batches", uniqueRows(state.uploadBatches.map(toUploadBatch), "fingerprint"), "fingerprint");
     await this.upsert("raw_alarm_records", state.rawAlarmRecords.map(toRawAlarmRecord));
-    await this.upsert("outage_incidents", uniqueRows(state.outageIncidents.map(toOutageIncident), "bts_id", "down_time", "up_time", "alarm_category"), "bts_id,down_time,up_time,alarm_category");
+    await this.upsert("outage_incidents", uniqueRows(state.outageIncidents.map(toOutageIncident), "id"), "id");
     await this.upsert("outage_remarks", uniqueRows(state.outageRemarks.map(toOutageRemark), "incident_id"), "incident_id");
     await this.upsert("improvement_proposals", state.improvementProposals.map(toImprovementProposal));
     await this.upsert("proposal_updates", state.proposalUpdates.map(toProposalUpdate));
