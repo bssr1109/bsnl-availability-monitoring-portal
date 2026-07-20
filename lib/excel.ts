@@ -105,12 +105,19 @@ export function normalizeMasterRows(rows: Record<string, unknown>[], source = "m
 
 function coerceDate(value: string) {
   if (!value) return new Date().toISOString();
-  if (/^\d+(\.\d+)?$/.test(value)) {
+  const cleaned = String(value).trim();
+  if (/^\d+(\.\d+)?$/.test(cleaned)) {
+    const serial = Number(cleaned);
+    const parsedCode = XLSX.SSF.parse_date_code(serial);
+    if (parsedCode) {
+      const parsed = new Date(Date.UTC(parsedCode.y, parsedCode.m - 1, parsedCode.d, parsedCode.H, parsedCode.M, Math.floor(parsedCode.S)));
+      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+    }
     const excelEpoch = Date.UTC(1899, 11, 30);
-    const parsed = new Date(excelEpoch + Number(value) * 86400000);
+    const parsed = new Date(excelEpoch + serial * 86400000);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
-  const parsed = new Date(value);
+  const parsed = new Date(cleaned);
   return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
 }
 

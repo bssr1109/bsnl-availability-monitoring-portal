@@ -157,16 +157,17 @@ export function uploadOutageRows(state: AppState, rows: Record<string, unknown>[
   const consolidated = consolidateRecords(raw, sites, batchId).map((incident) => ({ ...incident, id: newId() }));
   const { incidents: refreshedIncidents, updatedCount } = refreshExistingIncidents(state.outageIncidents, consolidated);
   if (existingBatch) {
+    const repaired = repairExistingBatchIncidents(refreshedIncidents, consolidated, existingBatch.id);
     return {
       state: {
         ...state,
         sites,
-        outageIncidents: refreshedIncidents
+        outageIncidents: repaired.incidents
       },
       duplicate: true,
-      incidentCount: 0,
-      skippedDuplicateIncidents: consolidated.length,
-      updatedIncidentCount: updatedCount
+      incidentCount: repaired.addedCount,
+      skippedDuplicateIncidents: consolidated.length - repaired.addedCount,
+      updatedIncidentCount: updatedCount + repaired.updatedCount
     };
   }
   const incidents = consolidated.filter((incident) => !existingIncidentKeys.has(incidentKey(incident)));
@@ -204,6 +205,33 @@ export function uploadOutageRows(state: AppState, rows: Record<string, unknown>[
   return { state: next, duplicate: false, incidentCount: incidents.length, skippedDuplicateIncidents, updatedIncidentCount: updatedCount };
 }
 
+function repairExistingBatchIncidents(existingIncidents: OutageIncident[], incomingIncidents: OutageIncident[], batchId: string) {
+  const available = [...incomingIncidents];
+  let updatedCount = 0;
+  const incidents = existingIncidents.map((existing) => {
+    if (existing.batchId !== batchId) return existing;
+    const matchIndex = available.findIndex((incoming) => looseIncidentKey(incoming) === looseIncidentKey(existing));
+    if (matchIndex === -1) return existing;
+    const incoming = available.splice(matchIndex, 1)[0];
+    updatedCount += 1;
+    return {
+      ...existing,
+      siteId: incoming.siteId,
+      btsId: incoming.btsId,
+      outageDate: incoming.outageDate,
+      downTime: incoming.downTime,
+      upTime: incoming.upTime,
+      durationMinutes: incoming.durationMinutes,
+      alarmCode: incoming.alarmCode,
+      alarmCategory: incoming.alarmCategory,
+      description: incoming.description,
+      rawRecordIds: Array.from(new Set([...existing.rawRecordIds, ...incoming.rawRecordIds])),
+      major: incoming.major
+    };
+  });
+  return { incidents: [...incidents, ...available], updatedCount, addedCount: available.length };
+}
+
 function refreshExistingIncidents(existingIncidents: OutageIncident[], incomingIncidents: OutageIncident[]) {
   const incomingByKey = new Map(incomingIncidents.map((incident) => [incidentKey(incident), incident]));
   let updatedCount = 0;
@@ -227,6 +255,10 @@ function refreshExistingIncidents(existingIncidents: OutageIncident[], incomingI
     };
   });
   return { incidents, updatedCount };
+}
+
+function looseIncidentKey(incident: OutageIncident) {
+  return [incident.btsId, incident.durationMinutes, incident.alarmCode, incident.alarmCategory, incident.description].join("|");
 }
 
 export function uploadMasterRows(state: AppState, rows: Record<string, unknown>[], fileName: string, actor: Profile) {
