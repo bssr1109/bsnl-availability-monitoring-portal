@@ -149,14 +149,26 @@ function newId() {
 
 export function uploadOutageRows(state: AppState, rows: Record<string, unknown>[], fileName: string, actor: Profile) {
   const fingerprint = fingerprintRows(rows);
-  if (state.uploadBatches.some((batch) => batch.fingerprint === fingerprint)) {
-    return { state, duplicate: true, incidentCount: 0 };
-  }
-  const batchId = newId();
+  const existingBatch = state.uploadBatches.find((batch) => batch.fingerprint === fingerprint);
+  const batchId = existingBatch?.id ?? newId();
   const raw = normalizeRows(rows, batchId).map((record) => ({ ...record, id: newId() }));
   const sites = mergeUploadedSites(state, raw);
   const existingIncidentKeys = new Set(state.outageIncidents.map(incidentKey));
   const consolidated = consolidateRecords(raw, sites, batchId).map((incident) => ({ ...incident, id: newId() }));
+  const { incidents: refreshedIncidents, updatedCount } = refreshExistingIncidents(state.outageIncidents, consolidated);
+  if (existingBatch) {
+    return {
+      state: {
+        ...state,
+        sites,
+        outageIncidents: refreshedIncidents
+      },
+      duplicate: true,
+      incidentCount: 0,
+      skippedDuplicateIncidents: consolidated.length,
+      updatedIncidentCount: updatedCount
+    };
+  }
   const incidents = consolidated.filter((incident) => !existingIncidentKeys.has(incidentKey(incident)));
   const skippedDuplicateIncidents = consolidated.length - incidents.length;
   const next: AppState = {
@@ -175,7 +187,7 @@ export function uploadOutageRows(state: AppState, rows: Record<string, unknown>[
       }
     ],
     rawAlarmRecords: [...state.rawAlarmRecords, ...raw],
-    outageIncidents: [...state.outageIncidents, ...incidents],
+    outageIncidents: [...refreshedIncidents, ...incidents],
     auditLogs: [
       ...state.auditLogs,
       {
@@ -185,11 +197,36 @@ export function uploadOutageRows(state: AppState, rows: Record<string, unknown>[
         entityType: "upload_batches",
         entityId: batchId,
         createdAt: new Date().toISOString(),
-        details: { fileName, rawRows: rows.length, incidents: incidents.length, skippedDuplicateIncidents }
+        details: { fileName, rawRows: rows.length, incidents: incidents.length, skippedDuplicateIncidents, updatedIncidentCount: updatedCount }
       }
     ]
   };
-  return { state: next, duplicate: false, incidentCount: incidents.length, skippedDuplicateIncidents };
+  return { state: next, duplicate: false, incidentCount: incidents.length, skippedDuplicateIncidents, updatedIncidentCount: updatedCount };
+}
+
+function refreshExistingIncidents(existingIncidents: OutageIncident[], incomingIncidents: OutageIncident[]) {
+  const incomingByKey = new Map(incomingIncidents.map((incident) => [incidentKey(incident), incident]));
+  let updatedCount = 0;
+  const incidents = existingIncidents.map((existing) => {
+    const incoming = incomingByKey.get(incidentKey(existing));
+    if (!incoming) return existing;
+    updatedCount += 1;
+    return {
+      ...existing,
+      siteId: incoming.siteId,
+      btsId: incoming.btsId,
+      outageDate: incoming.outageDate,
+      downTime: incoming.downTime,
+      upTime: incoming.upTime,
+      durationMinutes: incoming.durationMinutes,
+      alarmCode: incoming.alarmCode,
+      alarmCategory: incoming.alarmCategory,
+      description: incoming.description,
+      rawRecordIds: Array.from(new Set([...existing.rawRecordIds, ...incoming.rawRecordIds])),
+      major: incoming.major
+    };
+  });
+  return { incidents, updatedCount };
 }
 
 export function uploadMasterRows(state: AppState, rows: Record<string, unknown>[], fileName: string, actor: Profile) {

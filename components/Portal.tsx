@@ -451,8 +451,8 @@ function UploadPanel({ state, activeUser, persist, setToast }: { state: AppState
             persist(result.state);
             setToast(
               result.duplicate
-                ? "Duplicate upload protected: no new incidents were created."
-                : `Imported ${rows.length} rows, created ${result.incidentCount} new incidents${result.skippedDuplicateIncidents ? `, skipped ${result.skippedDuplicateIncidents} already-existing incidents` : ""}.`
+                ? `Duplicate upload protected: no new incidents were created${result.updatedIncidentCount ? `, refreshed ${result.updatedIncidentCount} existing incidents` : ""}.`
+                : `Imported ${rows.length} rows, created ${result.incidentCount} new incidents${result.skippedDuplicateIncidents ? `, refreshed ${result.updatedIncidentCount} and skipped ${result.skippedDuplicateIncidents} already-existing incidents` : ""}.`
             );
           }}
         />
