@@ -283,8 +283,9 @@ export function buildSiteAvailabilityTillDateWorkbook(state: AppState, asOfIso =
   const totalMinutes = differenceInMinutes(end, start) + 1;
   const startMs = start.getTime();
   const endMs = end.getTime();
+  const reportSites = sitesFromMaster(state);
 
-  const siteSummaries = state.sites.map((site) => {
+  const siteSummaries = reportSites.map((site) => {
     const incidents = monthToDateIncidents(state.outageIncidents, site, startMs, endMs);
     const downtimeMinutes = mergedDowntimeMinutes(incidents, startMs, endMs);
     const availability = availabilityPercent(downtimeMinutes, totalMinutes);
@@ -403,8 +404,36 @@ export function buildMasterRows(state: AppState) {
   });
 }
 
+function sitesFromMaster(state: AppState) {
+  const sitesByBts = new Map(state.sites.map((site) => [site.btsId, site]));
+  const masterSites = state.btsMaster
+    .filter((master) => master.active)
+    .map((master) => {
+      const site = sitesByBts.get(master.siteId);
+      if (site) return site;
+      return {
+        id: `master-site-${master.siteId}`,
+        ssa: "",
+        sdca: "",
+        btsId: master.siteId,
+        btsName: "",
+        ipId: master.siteId,
+        technology: "",
+        siteType: "",
+        vendor: "",
+        sdeId: "",
+        critical: false,
+        batteryBackupHours: 0,
+        transmissionPaths: 1
+      } satisfies Site;
+    });
+  const masterIds = new Set(masterSites.map((site) => site.btsId));
+  const outageOnlySites = state.sites.filter((site) => !masterIds.has(site.btsId));
+  return [...masterSites, ...outageOnlySites].sort((a, b) => a.btsId.localeCompare(b.btsId));
+}
+
 function monthToDateIncidents(incidents: OutageIncident[], site: Site, startMs: number, endMs: number) {
-  return incidents.filter((incident) => incident.siteId === site.id && inWindow(incident.downTime, startMs, endMs));
+  return incidents.filter((incident) => (incident.siteId === site.id || incident.btsId === site.btsId) && inWindow(incident.downTime, startMs, endMs));
 }
 
 function inWindow(iso: string, startMs: number, endMs: number) {
