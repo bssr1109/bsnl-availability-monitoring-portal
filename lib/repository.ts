@@ -104,17 +104,17 @@ export class SupabaseRepository implements DataRepository {
   }
 
   async save(state: AppState) {
-    await this.upsert("profiles", state.profiles.map(toProfile));
-    await this.upsert("field_officer_sdca_mapping", state.sdeSdcaMappings.map((item) => ({ id: item.id, profile_id: item.profileId, sdca: item.sdca })));
-    await this.upsert("sites", state.sites.map(toSite));
-    await this.upsert("bts_master", state.btsMaster.map(toBtsMaster));
-    await this.upsert("upload_batches", state.uploadBatches.map(toUploadBatch));
+    await this.upsert("profiles", uniqueRows(state.profiles.map(toProfile), "id"), "id");
+    await this.upsert("field_officer_sdca_mapping", uniqueRows(state.sdeSdcaMappings.map((item) => ({ id: item.id, profile_id: item.profileId, sdca: item.sdca })), "id"), "id");
+    await this.upsert("sites", uniqueRows(state.sites.map(toSite), "bts_id"), "bts_id");
+    await this.upsert("bts_master", uniqueRows(state.btsMaster.map(toBtsMaster), "site_id"), "site_id");
+    await this.upsert("upload_batches", uniqueRows(state.uploadBatches.map(toUploadBatch), "fingerprint"), "fingerprint");
     await this.upsert("raw_alarm_records", state.rawAlarmRecords.map(toRawAlarmRecord));
-    await this.upsert("outage_incidents", state.outageIncidents.map(toOutageIncident));
-    await this.upsert("outage_remarks", state.outageRemarks.map(toOutageRemark));
+    await this.upsert("outage_incidents", uniqueRows(state.outageIncidents.map(toOutageIncident), "bts_id", "down_time", "up_time", "alarm_category"), "bts_id,down_time,up_time,alarm_category");
+    await this.upsert("outage_remarks", uniqueRows(state.outageRemarks.map(toOutageRemark), "incident_id"), "incident_id");
     await this.upsert("improvement_proposals", state.improvementProposals.map(toImprovementProposal));
     await this.upsert("proposal_updates", state.proposalUpdates.map(toProposalUpdate));
-    await this.upsert("eod_submissions", state.eodSubmissions.map(toEodSubmission));
+    await this.upsert("eod_submissions", uniqueRows(state.eodSubmissions.map(toEodSubmission), "field_officer_id", "date"), "field_officer_id,date");
     await this.upsert("attachments", state.attachments.map(toAttachment));
     await this.upsert("audit_logs", state.auditLogs.map(toAuditLog));
   }
@@ -129,9 +129,9 @@ export class SupabaseRepository implements DataRepository {
     return data ?? [];
   }
 
-  private async upsert(table: string, rows: Record<string, unknown>[]) {
+  private async upsert(table: string, rows: Record<string, unknown>[], onConflict?: string) {
     if (!rows.length) return;
-    const { error } = await this.client.from(table).upsert(rows);
+    const { error } = await this.client.from(table).upsert(rows, onConflict ? { onConflict } : undefined);
     if (error) throw error;
   }
 }
@@ -155,7 +155,10 @@ export function uploadOutageRows(state: AppState, rows: Record<string, unknown>[
   const batchId = newId();
   const raw = normalizeRows(rows, batchId).map((record) => ({ ...record, id: newId() }));
   const sites = mergeUploadedSites(state, raw);
-  const incidents = consolidateRecords(raw, sites, batchId).map((incident) => ({ ...incident, id: newId() }));
+  const existingIncidentKeys = new Set(state.outageIncidents.map(incidentKey));
+  const consolidated = consolidateRecords(raw, sites, batchId).map((incident) => ({ ...incident, id: newId() }));
+  const incidents = consolidated.filter((incident) => !existingIncidentKeys.has(incidentKey(incident)));
+  const skippedDuplicateIncidents = consolidated.length - incidents.length;
   const next: AppState = {
     ...state,
     sites,
@@ -182,11 +185,11 @@ export function uploadOutageRows(state: AppState, rows: Record<string, unknown>[
         entityType: "upload_batches",
         entityId: batchId,
         createdAt: new Date().toISOString(),
-        details: { fileName, rawRows: rows.length, incidents: incidents.length }
+        details: { fileName, rawRows: rows.length, incidents: incidents.length, skippedDuplicateIncidents }
       }
     ]
   };
-  return { state: next, duplicate: false, incidentCount: incidents.length };
+  return { state: next, duplicate: false, incidentCount: incidents.length, skippedDuplicateIncidents };
 }
 
 export function uploadMasterRows(state: AppState, rows: Record<string, unknown>[], fileName: string, actor: Profile) {
@@ -220,14 +223,15 @@ function mergeUploadedSites(state: AppState, records: RawAlarmRecord[]): Site[] 
 
   for (const record of records) {
     const item = record.normalized;
-    if (!item.btsId || sitesByBts.has(item.btsId)) continue;
+    if (!item.btsId) continue;
 
     const sdca = item.sdca || "Unmapped";
     const sde = state.profiles.find((profile) => profile.role === "SDE" && profile.sdca?.toLowerCase() === sdca.toLowerCase());
     const fallbackSde = state.profiles.find((profile) => profile.role === "SDE");
+    const existing = sitesByBts.get(item.btsId);
 
     sitesByBts.set(item.btsId, {
-      id: newId(),
+      id: existing?.id ?? newId(),
       ssa: item.ssa || "Warangal",
       sdca,
       btsId: item.btsId,
@@ -236,10 +240,10 @@ function mergeUploadedSites(state: AppState, records: RawAlarmRecord[]): Site[] 
       technology: item.technology || "Unknown",
       siteType: item.siteType || "Unknown",
       vendor: item.vendor || "Unknown",
-      sdeId: sde?.id ?? fallbackSde?.id ?? "",
-      critical: false,
-      batteryBackupHours: 0,
-      transmissionPaths: 1
+      sdeId: sde?.id ?? existing?.sdeId ?? fallbackSde?.id ?? "",
+      critical: existing?.critical ?? false,
+      batteryBackupHours: existing?.batteryBackupHours ?? 0,
+      transmissionPaths: existing?.transmissionPaths ?? 1
     });
   }
 
@@ -275,6 +279,18 @@ export function submitEod(state: AppState, submission: EodSubmission) {
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function incidentKey(incident: OutageIncident) {
+  return [incident.btsId, incident.downTime, incident.upTime, incident.alarmCategory].join("|");
+}
+
+function uniqueRows(rows: Record<string, unknown>[], ...keys: string[]) {
+  const map = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    map.set(keys.map((key) => String(row[key] ?? "")).join("|"), row);
+  }
+  return Array.from(map.values());
 }
 
 function fromProfile(row: any): Profile {

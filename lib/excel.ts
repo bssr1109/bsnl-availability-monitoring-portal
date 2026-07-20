@@ -159,7 +159,13 @@ export function consolidateRecords(records: RawAlarmRecord[], sites: Site[], bat
 }
 
 export function fingerprintRows(rows: Record<string, unknown>[]) {
-  return JSON.stringify(rows.map((row) => Object.values(row).join("|"))).length.toString(36) + "-" + rows.length;
+  const canonical = JSON.stringify(rows.map((row) => Object.fromEntries(Object.entries(row).sort(([a], [b]) => a.localeCompare(b)))));
+  let hash = 2166136261;
+  for (let index = 0; index < canonical.length; index += 1) {
+    hash ^= canonical.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${rows.length}-${(hash >>> 0).toString(36)}-${canonical.length.toString(36)}`;
 }
 
 export function downloadWorkbook(fileName: string, sheets: Record<string, Record<string, unknown>[]>) {

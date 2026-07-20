@@ -431,7 +431,11 @@ function UploadPanel({ state, activeUser, persist, setToast }: { state: AppState
             const rows = await readRowsFromWorkbook(file);
             const result = uploadOutageRows(state, rows, file.name, activeUser);
             persist(result.state);
-            setToast(result.duplicate ? "Duplicate upload protected: no new incidents were created." : `Imported ${rows.length} rows and created ${result.incidentCount} consolidated incidents.`);
+            setToast(
+              result.duplicate
+                ? "Duplicate upload protected: no new incidents were created."
+                : `Imported ${rows.length} rows, created ${result.incidentCount} new incidents${result.skippedDuplicateIncidents ? `, skipped ${result.skippedDuplicateIncidents} already-existing incidents` : ""}.`
+            );
           }}
         />
       </label>
