@@ -32,7 +32,7 @@ import {
   YAxis
 } from "recharts";
 import { clsx } from "clsx";
-import { differenceInMinutes, format, parseISO } from "date-fns";
+import { format, parseISO } from "date-fns";
 import type { AppState, ImprovementProposal, OutageIncident, OutageRemark, Profile, Site } from "@/lib/types";
 import { IMPROVEMENT_TYPES, PRIMARY_CAUSES } from "@/lib/types";
 import { getRepository, submitEod, uploadMasterRows, uploadOutageRows, upsertProposal, upsertRemark } from "@/lib/repository";
@@ -1090,10 +1090,7 @@ function incidentsForMonth(state: AppState, site: Site, monthIso: string) {
 }
 
 function actualIncidentMinutes(incident: OutageIncident) {
-  const down = parseISO(incident.downTime);
-  const up = parseISO(incident.upTime);
-  const computed = differenceInMinutes(up, down);
-  return computed > 0 ? computed : incident.durationMinutes;
+  return Number.isFinite(incident.durationMinutes) ? incident.durationMinutes : 0;
 }
 
 function formatDownUp(incident: OutageIncident) {
