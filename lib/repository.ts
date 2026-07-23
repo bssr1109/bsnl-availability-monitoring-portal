@@ -23,6 +23,7 @@ export interface DataRepository {
   load(): AppState | Promise<AppState>;
   save(state: AppState): void | Promise<void>;
   reset(): AppState | Promise<AppState>;
+  deleteUploadBatch?(batchId: string): void | Promise<void>;
 }
 
 export class LocalJsonRepository implements DataRepository {
@@ -45,6 +46,10 @@ export class LocalJsonRepository implements DataRepository {
   reset() {
     this.save(initialState);
     return initialState;
+  }
+
+  deleteUploadBatch() {
+    return;
   }
 }
 
@@ -125,16 +130,62 @@ export class SupabaseRepository implements DataRepository {
     return this.load();
   }
 
+  async deleteUploadBatch(batchId: string) {
+    const incidents = await this.selectBy("outage_incidents", "batch_id", batchId, "id");
+    const incidentIds = incidents.map((row) => row.id as string);
+    const proposals = await this.selectIn("improvement_proposals", "incident_id", incidentIds, "id");
+    const proposalIds = proposals.map((row) => row.id as string);
+
+    await this.deleteIn("proposal_updates", "proposal_id", proposalIds);
+    await this.deleteIn("improvement_proposals", "incident_id", incidentIds);
+    await this.deleteIn("outage_remarks", "incident_id", incidentIds);
+    await this.deleteIn("attachments", "incident_id", incidentIds);
+    await this.deleteBy("raw_alarm_records", "batch_id", batchId);
+    await this.deleteBy("outage_incidents", "batch_id", batchId);
+    await this.deleteBy("audit_logs", "entity_id", batchId);
+    await this.deleteBy("upload_batches", "id", batchId);
+  }
+
   private async select(table: string) {
     const { data, error } = await this.client.from(table).select("*");
     if (error) throw error;
     return data ?? [];
   }
 
+  private async selectBy(table: string, column: string, value: string, columns = "*"): Promise<any[]> {
+    const { data, error } = await this.client.from(table).select(columns).eq(column, value);
+    if (error) throw error;
+    return data ?? [];
+  }
+
+  private async selectIn(table: string, column: string, values: string[], columns = "*"): Promise<any[]> {
+    if (!values.length) return [];
+    const results: any[] = [];
+    for (let index = 0; index < values.length; index += 100) {
+      const { data, error } = await this.client.from(table).select(columns).in(column, values.slice(index, index + 100));
+      if (error) throw error;
+      results.push(...(data ?? []));
+    }
+    return results;
+  }
+
   private async upsert(table: string, rows: Record<string, unknown>[], onConflict?: string) {
     if (!rows.length) return;
     const { error } = await this.client.from(table).upsert(rows, onConflict ? { onConflict } : undefined);
     if (error) throw error;
+  }
+
+  private async deleteBy(table: string, column: string, value: string) {
+    const { error } = await this.client.from(table).delete().eq(column, value);
+    if (error) throw error;
+  }
+
+  private async deleteIn(table: string, column: string, values: string[]) {
+    if (!values.length) return;
+    for (let index = 0; index < values.length; index += 100) {
+      const { error } = await this.client.from(table).delete().in(column, values.slice(index, index + 100));
+      if (error) throw error;
+    }
   }
 
   private async prepareSiteRows(rows: Record<string, unknown>[]) {

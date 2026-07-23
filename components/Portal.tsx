@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Send,
   Shield,
+  Trash2,
   Upload,
   Unlock,
   UserRound
@@ -508,15 +509,37 @@ function UploadPanel({ state, activeUser, persist, setToast }: { state: AppState
               <th className="p-2">Uploaded</th>
               <th className="p-2">Rows</th>
               <th className="p-2">Incidents</th>
+              <th className="p-2">Action</th>
             </tr>
           </thead>
           <tbody>
-            {state.uploadBatches.map((batch) => (
+            {[...state.uploadBatches].sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt)).map((batch) => (
               <tr key={batch.id} className="border-t border-slate-100">
                 <td className="p-2 font-medium">{batch.fileName}</td>
                 <td className="p-2">{format(parseISO(batch.uploadedAt), "dd MMM yyyy HH:mm")}</td>
                 <td className="p-2">{batch.rowCount}</td>
                 <td className="p-2">{batch.incidentCount}</td>
+                <td className="p-2">
+                  <button
+                    disabled={activeUser.role !== "Admin"}
+                    onClick={async () => {
+                      const ok = window.confirm(`Delete upload "${batch.fileName}" and all outage records, remarks, proposals, and raw rows created from it?`);
+                      if (!ok) return;
+                      try {
+                        await repo.deleteUploadBatch?.(batch.id);
+                        persist(removeUploadBatchFromState(state, batch.id));
+                        setToast(`Deleted upload ${batch.fileName}. You can upload it again now.`);
+                      } catch (error: any) {
+                        console.error(error);
+                        setToast(`Delete failed: ${error.message ?? "check Supabase permissions"}`);
+                      }
+                    }}
+                    className="inline-flex items-center gap-2 rounded border border-red-200 px-2 py-1 text-xs font-semibold text-red-700 disabled:border-slate-200 disabled:text-slate-400"
+                  >
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -602,6 +625,22 @@ function MasterPanel({ state, activeUser, persist, setToast }: { state: AppState
       </section>
     </div>
   );
+}
+
+function removeUploadBatchFromState(state: AppState, batchId: string) {
+  const incidentIds = new Set(state.outageIncidents.filter((incident) => incident.batchId === batchId).map((incident) => incident.id));
+  const proposalIds = new Set(state.improvementProposals.filter((proposal) => incidentIds.has(proposal.incidentId)).map((proposal) => proposal.id));
+  return {
+    ...state,
+    uploadBatches: state.uploadBatches.filter((batch) => batch.id !== batchId),
+    rawAlarmRecords: state.rawAlarmRecords.filter((record) => record.batchId !== batchId),
+    outageIncidents: state.outageIncidents.filter((incident) => incident.batchId !== batchId),
+    outageRemarks: state.outageRemarks.filter((remark) => !incidentIds.has(remark.incidentId)),
+    improvementProposals: state.improvementProposals.filter((proposal) => !incidentIds.has(proposal.incidentId)),
+    proposalUpdates: state.proposalUpdates.filter((update) => !proposalIds.has(update.proposalId)),
+    attachments: state.attachments.filter((attachment) => !incidentIds.has(attachment.incidentId)),
+    auditLogs: state.auditLogs.filter((log) => log.entityId !== batchId)
+  };
 }
 
 function RemarksPanel(props: {
