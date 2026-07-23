@@ -190,12 +190,12 @@ export class SupabaseRepository implements DataRepository {
 
   private async prepareSiteRows(rows: Record<string, unknown>[]) {
     if (!rows.length) return { rows, idRemap: new Map<string, string>() };
-    const { data, error } = await this.client.from("sites").select("id,bts_id");
-    if (error) throw error;
-    const existingByBts = new Map((data ?? []).map((row) => [String(row.bts_id), String(row.id)]));
+    const incomingBtsIds = Array.from(new Set(rows.map((row) => String(row.bts_id ?? "").trim()).filter(Boolean)));
+    const existingSites = await this.selectIn("sites", "bts_id", incomingBtsIds, "id,bts_id");
+    const existingByBts = new Map(existingSites.map((row) => [String(row.bts_id), String(row.id)]));
     const idRemap = new Map<string, string>();
     const preparedRows = rows.map((row) => {
-      const existingId = existingByBts.get(String(row.bts_id ?? ""));
+      const existingId = existingByBts.get(String(row.bts_id ?? "").trim());
       if (!existingId) return row;
       const incomingId = String(row.id ?? "");
       if (incomingId && incomingId !== existingId) idRemap.set(incomingId, existingId);
