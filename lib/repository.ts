@@ -154,15 +154,34 @@ export class SupabaseRepository implements DataRepository {
   }
 
   private async select(table: string) {
-    const { data, error } = await this.client.from(table).select("*");
-    if (error) throw error;
-    return data ?? [];
+    const results: any[] = [];
+    const pageSize = 1000;
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await this.client
+        .from(table)
+        .select("*")
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      results.push(...(data ?? []));
+      if (!data || data.length < pageSize) break;
+    }
+    return results;
   }
 
   private async selectBy(table: string, column: string, value: string, columns = "*"): Promise<any[]> {
-    const { data, error } = await this.client.from(table).select(columns).eq(column, value);
-    if (error) throw error;
-    return data ?? [];
+    const results: any[] = [];
+    const pageSize = 1000;
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await this.client
+        .from(table)
+        .select(columns)
+        .eq(column, value)
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      results.push(...(data ?? []));
+      if (!data || data.length < pageSize) break;
+    }
+    return results;
   }
 
   private async selectIn(table: string, column: string, values: string[], columns = "*"): Promise<any[]> {
@@ -188,9 +207,25 @@ export class SupabaseRepository implements DataRepository {
       const { error } = await this.client.from("sites").update(updates).eq("bts_id", bts_id);
       if (error) throw error;
     }
-    if (prepared.newRows.length) {
-      const { error } = await this.client.from("sites").insert(prepared.newRows);
-      if (error) throw error;
+    for (let index = 0; index < prepared.newRows.length; index += 100) {
+      const chunk = prepared.newRows.slice(index, index + 100);
+      const { error } = await this.client.from("sites").insert(chunk);
+      if (!error) continue;
+      if (!isDuplicateKeyError(error)) throw error;
+
+      for (const row of chunk) {
+        const { error: singleError } = await this.client.from("sites").insert(row);
+        if (!singleError) continue;
+        if (!isDuplicateKeyError(singleError)) throw singleError;
+
+        const existing = await this.findSiteByBtsId(row.bts_id);
+        if (!existing?.id) throw singleError;
+        const incomingId = String(row.id ?? "");
+        if (incomingId && incomingId !== String(existing.id)) prepared.idRemap.set(incomingId, String(existing.id));
+        const { id, bts_id, ...updates } = row;
+        const { error: updateError } = await this.client.from("sites").update(updates).eq("bts_id", bts_id);
+        if (updateError) throw updateError;
+      }
     }
   }
 
@@ -200,10 +235,45 @@ export class SupabaseRepository implements DataRepository {
       const { error } = await this.client.from("outage_incidents").update(updates).eq("id", id);
       if (error) throw error;
     }
-    if (prepared.newRows.length) {
-      const { error } = await this.client.from("outage_incidents").insert(prepared.newRows);
-      if (error) throw error;
+    for (let index = 0; index < prepared.newRows.length; index += 100) {
+      const chunk = prepared.newRows.slice(index, index + 100);
+      const { error } = await this.client.from("outage_incidents").insert(chunk);
+      if (!error) continue;
+      if (!isDuplicateKeyError(error)) throw error;
+
+      for (const row of chunk) {
+        const { error: singleError } = await this.client.from("outage_incidents").insert(row);
+        if (!singleError) continue;
+        if (!isDuplicateKeyError(singleError)) throw singleError;
+
+        const existing = await this.findIncidentByNaturalKey(row);
+        if (!existing?.id) throw singleError;
+        const incomingId = String(row.id ?? "");
+        if (incomingId && incomingId !== String(existing.id)) prepared.idRemap.set(incomingId, String(existing.id));
+        const { id, batch_id, bts_id, down_time, up_time, alarm_category, raw_record_ids, ...updates } = row;
+        const { error: updateError } = await this.client.from("outage_incidents").update(updates).eq("id", existing.id);
+        if (updateError) throw updateError;
+      }
     }
+  }
+
+  private async findSiteByBtsId(btsId: unknown) {
+    const { data, error } = await this.client.from("sites").select("id,bts_id").eq("bts_id", String(btsId ?? "").trim()).maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+
+  private async findIncidentByNaturalKey(row: Record<string, unknown>) {
+    const { data, error } = await this.client
+      .from("outage_incidents")
+      .select("id,bts_id,down_time,up_time,alarm_category")
+      .eq("bts_id", String(row.bts_id ?? "").trim())
+      .eq("down_time", String(row.down_time ?? ""))
+      .eq("up_time", String(row.up_time ?? ""))
+      .eq("alarm_category", String(row.alarm_category ?? "").trim())
+      .maybeSingle();
+    if (error) throw error;
+    return data;
   }
 
   private async deleteBy(table: string, column: string, value: string) {
@@ -507,6 +577,12 @@ function uniqueRows(rows: Record<string, unknown>[], ...keys: string[]) {
     map.set(keys.map((key) => String(row[key] ?? "")).join("|"), row);
   }
   return Array.from(map.values());
+}
+
+function isDuplicateKeyError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const item = error as { code?: string; message?: string };
+  return item.code === "23505" || String(item.message ?? "").toLowerCase().includes("duplicate key");
 }
 
 function fromProfile(row: any): Profile {
