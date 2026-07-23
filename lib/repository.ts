@@ -111,18 +111,25 @@ export class SupabaseRepository implements DataRepository {
   async save(state: AppState) {
     const preparedSites = await this.prepareSiteRows(uniqueRows(state.sites.map(toSite), "bts_id"));
     const siteIdForSave = (siteId: string) => preparedSites.idRemap.get(siteId) ?? siteId;
+    const preparedIncidents = await this.prepareIncidentRows(
+      uniqueRows(state.outageIncidents.map((item) => toOutageIncident({ ...item, siteId: siteIdForSave(item.siteId) })), "bts_id", "down_time", "up_time", "alarm_category")
+    );
+    const incidentIdForSave = (incidentId: string) => preparedIncidents.idRemap.get(incidentId) ?? incidentId;
     await this.upsert("profiles", uniqueRows(state.profiles.map(toProfile), "id"), "id");
     await this.upsert("field_officer_sdca_mapping", uniqueRows(state.sdeSdcaMappings.map((item) => ({ id: item.id, profile_id: item.profileId, sdca: item.sdca })), "id"), "id");
-    await this.upsert("sites", preparedSites.rows, "id");
+    await this.saveSiteRows(preparedSites);
     await this.upsert("bts_master", uniqueRows(state.btsMaster.map(toBtsMaster), "site_id"), "site_id");
     await this.upsert("upload_batches", uniqueRows(state.uploadBatches.map(toUploadBatch), "fingerprint"), "fingerprint");
     await this.upsert("raw_alarm_records", state.rawAlarmRecords.map(toRawAlarmRecord));
-    await this.upsert("outage_incidents", uniqueRows(state.outageIncidents.map((item) => toOutageIncident({ ...item, siteId: siteIdForSave(item.siteId) })), "id"), "id");
-    await this.upsert("outage_remarks", uniqueRows(state.outageRemarks.map(toOutageRemark), "incident_id"), "incident_id");
-    await this.upsert("improvement_proposals", state.improvementProposals.map((item) => toImprovementProposal({ ...item, siteId: siteIdForSave(item.siteId) })));
+    await this.saveIncidentRows(preparedIncidents);
+    await this.upsert("outage_remarks", uniqueRows(state.outageRemarks.map((item) => toOutageRemark({ ...item, incidentId: incidentIdForSave(item.incidentId) })), "incident_id"), "incident_id");
+    await this.upsert(
+      "improvement_proposals",
+      state.improvementProposals.map((item) => toImprovementProposal({ ...item, incidentId: incidentIdForSave(item.incidentId), siteId: siteIdForSave(item.siteId) }))
+    );
     await this.upsert("proposal_updates", state.proposalUpdates.map(toProposalUpdate));
     await this.upsert("eod_submissions", uniqueRows(state.eodSubmissions.map(toEodSubmission), "field_officer_id", "date"), "field_officer_id,date");
-    await this.upsert("attachments", state.attachments.map(toAttachment));
+    await this.upsert("attachments", state.attachments.map((item) => toAttachment({ ...item, incidentId: incidentIdForSave(item.incidentId) })));
     await this.upsert("audit_logs", state.auditLogs.map(toAuditLog));
   }
 
@@ -175,6 +182,30 @@ export class SupabaseRepository implements DataRepository {
     if (error) throw error;
   }
 
+  private async saveSiteRows(prepared: Awaited<ReturnType<SupabaseRepository["prepareSiteRows"]>>) {
+    for (const row of prepared.existingRows) {
+      const { id, bts_id, ...updates } = row;
+      const { error } = await this.client.from("sites").update(updates).eq("bts_id", bts_id);
+      if (error) throw error;
+    }
+    if (prepared.newRows.length) {
+      const { error } = await this.client.from("sites").insert(prepared.newRows);
+      if (error) throw error;
+    }
+  }
+
+  private async saveIncidentRows(prepared: Awaited<ReturnType<SupabaseRepository["prepareIncidentRows"]>>) {
+    for (const row of prepared.existingRows) {
+      const { id, batch_id, bts_id, down_time, up_time, alarm_category, raw_record_ids, ...updates } = row;
+      const { error } = await this.client.from("outage_incidents").update(updates).eq("id", id);
+      if (error) throw error;
+    }
+    if (prepared.newRows.length) {
+      const { error } = await this.client.from("outage_incidents").insert(prepared.newRows);
+      if (error) throw error;
+    }
+  }
+
   private async deleteBy(table: string, column: string, value: string) {
     const { error } = await this.client.from(table).delete().eq(column, value);
     if (error) throw error;
@@ -189,19 +220,45 @@ export class SupabaseRepository implements DataRepository {
   }
 
   private async prepareSiteRows(rows: Record<string, unknown>[]) {
-    if (!rows.length) return { rows, idRemap: new Map<string, string>() };
+    if (!rows.length) return { existingRows: [], newRows: [], idRemap: new Map<string, string>() };
     const incomingBtsIds = Array.from(new Set(rows.map((row) => String(row.bts_id ?? "").trim()).filter(Boolean)));
     const existingSites = await this.selectIn("sites", "bts_id", incomingBtsIds, "id,bts_id");
     const existingByBts = new Map(existingSites.map((row) => [String(row.bts_id), String(row.id)]));
     const idRemap = new Map<string, string>();
-    const preparedRows = rows.map((row) => {
+    const existingRows: Record<string, unknown>[] = [];
+    const newRows: Record<string, unknown>[] = [];
+    for (const row of rows) {
       const existingId = existingByBts.get(String(row.bts_id ?? "").trim());
-      if (!existingId) return row;
+      if (!existingId) {
+        newRows.push(row);
+        continue;
+      }
       const incomingId = String(row.id ?? "");
       if (incomingId && incomingId !== existingId) idRemap.set(incomingId, existingId);
-      return { ...row, id: existingId };
-    });
-    return { rows: preparedRows, idRemap };
+      existingRows.push({ ...row, id: existingId });
+    }
+    return { existingRows, newRows, idRemap };
+  }
+
+  private async prepareIncidentRows(rows: Record<string, unknown>[]) {
+    if (!rows.length) return { existingRows: [], newRows: [], idRemap: new Map<string, string>() };
+    const incomingBtsIds = Array.from(new Set(rows.map((row) => String(row.bts_id ?? "").trim()).filter(Boolean)));
+    const existingIncidents = await this.selectIn("outage_incidents", "bts_id", incomingBtsIds, "id,bts_id,down_time,up_time,alarm_category");
+    const existingByNaturalKey = new Map(existingIncidents.map((row) => [dbIncidentNaturalKey(row), String(row.id)]));
+    const idRemap = new Map<string, string>();
+    const existingRows: Record<string, unknown>[] = [];
+    const newRows: Record<string, unknown>[] = [];
+    for (const row of rows) {
+      const existingId = existingByNaturalKey.get(dbIncidentNaturalKey(row));
+      if (!existingId) {
+        newRows.push(row);
+        continue;
+      }
+      const incomingId = String(row.id ?? "");
+      if (incomingId && incomingId !== existingId) idRemap.set(incomingId, existingId);
+      existingRows.push({ ...row, id: existingId });
+    }
+    return { existingRows, newRows, idRemap };
   }
 }
 
@@ -428,6 +485,20 @@ function isUuid(value: string) {
 
 function incidentKey(incident: OutageIncident) {
   return [incident.btsId, incident.downTime, incident.upTime, incident.alarmCategory].join("|");
+}
+
+function dbIncidentNaturalKey(row: Record<string, unknown>) {
+  return [
+    String(row.bts_id ?? "").trim(),
+    normalizeIsoKey(row.down_time),
+    normalizeIsoKey(row.up_time),
+    String(row.alarm_category ?? "").trim()
+  ].join("|");
+}
+
+function normalizeIsoKey(value: unknown) {
+  const parsed = Date.parse(String(value ?? ""));
+  return Number.isNaN(parsed) ? String(value ?? "").trim() : new Date(parsed).toISOString();
 }
 
 function uniqueRows(rows: Record<string, unknown>[], ...keys: string[]) {
