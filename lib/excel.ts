@@ -21,6 +21,7 @@ const COLUMN_ALIASES: Record<string, string[]> = {
   additionalInfo: ["addl info", "addl in", "addi in", "addi info", "additional info", "additional", "remark", "remarks"],
   faultType: ["fault ty", "fault type", "fault"]
 };
+const IST_OFFSET_MINUTES = 330;
 
 function norm(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -57,7 +58,7 @@ export function normalizeRows(rows: Record<string, unknown>[], batchId: string):
     const downTime = coerceDate(pick("downTime"));
     const upTime = coerceDate(pick("upTime"));
     const computedDuration = Math.max(0, (Date.parse(upTime) - Date.parse(downTime)) / 60000);
-    const duration = computedDuration || Number(pick("duration")) || 0;
+    const duration = Number(pick("duration")) || computedDuration || 0;
     const description = [pick("description"), pick("additionalInfo"), pick("faultType")].filter(Boolean).join(" - ");
     return {
       id: `raw-${batchId}-${index + 1}`,
@@ -110,11 +111,11 @@ function coerceDate(value: string) {
     const serial = Number(cleaned);
     const parsedCode = XLSX.SSF.parse_date_code(serial);
     if (parsedCode) {
-      const parsed = new Date(parsedCode.y, parsedCode.m - 1, parsedCode.d, parsedCode.H, parsedCode.M, Math.floor(parsedCode.S));
+      const parsed = datePartsAsIstIso(parsedCode.y, parsedCode.m - 1, parsedCode.d, parsedCode.H, parsedCode.M, Math.floor(parsedCode.S));
       if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
     }
     const excelEpoch = Date.UTC(1899, 11, 30);
-    const parsed = new Date(excelEpoch + serial * 86400000);
+    const parsed = new Date(excelEpoch + serial * 86400000 - IST_OFFSET_MINUTES * 60000);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
   const knownFormats = [
@@ -131,10 +132,23 @@ function coerceDate(value: string) {
   ];
   for (const formatText of knownFormats) {
     const parsedKnown = parse(cleaned, formatText, new Date());
-    if (isValid(parsedKnown)) return parsedKnown.toISOString();
+    if (isValid(parsedKnown)) {
+      return datePartsAsIstIso(
+        parsedKnown.getFullYear(),
+        parsedKnown.getMonth(),
+        parsedKnown.getDate(),
+        parsedKnown.getHours(),
+        parsedKnown.getMinutes(),
+        parsedKnown.getSeconds()
+      ).toISOString();
+    }
   }
   const parsed = new Date(cleaned);
   return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+}
+
+function datePartsAsIstIso(year: number, monthIndex: number, day: number, hour: number, minute: number, second = 0) {
+  return new Date(Date.UTC(year, monthIndex, day, hour, minute, second) - IST_OFFSET_MINUTES * 60000);
 }
 
 export function alarmCategory(code: string, description: string) {
@@ -168,7 +182,7 @@ export function consolidateRecords(records: RawAlarmRecord[], sites: Site[], bat
       batchId,
       siteId: site?.id ?? `unmapped-${first.normalized.btsId}`,
       btsId: first.normalized.btsId,
-      outageDate: first.normalized.downTime.slice(0, 10),
+      outageDate: format(parseISO(first.normalized.downTime), "yyyy-MM-dd"),
       downTime: first.normalized.downTime,
       upTime: first.normalized.upTime,
       durationMinutes: Math.max(...group.map((item) => item.normalized.durationMinutes)),

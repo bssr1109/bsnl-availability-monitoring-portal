@@ -53,11 +53,16 @@ export function availabilityPercent(downtimeMinutes: number, totalMinutes: numbe
 
 export function availabilityForSite(site: Site, incidents: OutageIncident[], monthIso: string) {
   const total = minutesInMonth(monthIso);
-  const downtime = downtimeForSite(site.id, incidents, monthIso);
+  const monthKey = format(parseISO(monthIso), "yyyy-MM");
+  const siteIncidents = incidents
+    .filter((incident) => (incident.siteId === site.id || incident.btsId === site.btsId) && sameMonth(incident.downTime, monthKey))
+    .map((incident) => ({ start: incident.downTime, end: incident.upTime }));
+  const downtime = mergeIntervals(siteIncidents).reduce((sum, item) => sum + item.minutes, 0);
   const permissible = total * ((100 - TARGET_AVAILABILITY) / 100);
   const current = availabilityPercent(downtime, total);
   const dayOfMonth = parseISO(monthIso).getDate();
-  const projectedDowntime = Math.round((downtime / Math.max(1, dayOfMonth)) * new Date(monthIso).getDate());
+  const daysInMonth = endOfMonth(parseISO(monthIso)).getDate();
+  const projectedDowntime = Math.round((downtime / Math.max(1, dayOfMonth)) * daysInMonth);
   const projected = availabilityPercent(projectedDowntime, total);
 
   return {
