@@ -104,15 +104,17 @@ export class SupabaseRepository implements DataRepository {
   }
 
   async save(state: AppState) {
+    const preparedSites = await this.prepareSiteRows(uniqueRows(state.sites.map(toSite), "bts_id"));
+    const siteIdForSave = (siteId: string) => preparedSites.idRemap.get(siteId) ?? siteId;
     await this.upsert("profiles", uniqueRows(state.profiles.map(toProfile), "id"), "id");
     await this.upsert("field_officer_sdca_mapping", uniqueRows(state.sdeSdcaMappings.map((item) => ({ id: item.id, profile_id: item.profileId, sdca: item.sdca })), "id"), "id");
-    await this.upsert("sites", uniqueRows(state.sites.map(toSite), "bts_id"), "bts_id");
+    await this.upsert("sites", preparedSites.rows, "id");
     await this.upsert("bts_master", uniqueRows(state.btsMaster.map(toBtsMaster), "site_id"), "site_id");
     await this.upsert("upload_batches", uniqueRows(state.uploadBatches.map(toUploadBatch), "fingerprint"), "fingerprint");
     await this.upsert("raw_alarm_records", state.rawAlarmRecords.map(toRawAlarmRecord));
-    await this.upsert("outage_incidents", uniqueRows(state.outageIncidents.map(toOutageIncident), "id"), "id");
+    await this.upsert("outage_incidents", uniqueRows(state.outageIncidents.map((item) => toOutageIncident({ ...item, siteId: siteIdForSave(item.siteId) })), "id"), "id");
     await this.upsert("outage_remarks", uniqueRows(state.outageRemarks.map(toOutageRemark), "incident_id"), "incident_id");
-    await this.upsert("improvement_proposals", state.improvementProposals.map(toImprovementProposal));
+    await this.upsert("improvement_proposals", state.improvementProposals.map((item) => toImprovementProposal({ ...item, siteId: siteIdForSave(item.siteId) })));
     await this.upsert("proposal_updates", state.proposalUpdates.map(toProposalUpdate));
     await this.upsert("eod_submissions", uniqueRows(state.eodSubmissions.map(toEodSubmission), "field_officer_id", "date"), "field_officer_id,date");
     await this.upsert("attachments", state.attachments.map(toAttachment));
@@ -133,6 +135,22 @@ export class SupabaseRepository implements DataRepository {
     if (!rows.length) return;
     const { error } = await this.client.from(table).upsert(rows, onConflict ? { onConflict } : undefined);
     if (error) throw error;
+  }
+
+  private async prepareSiteRows(rows: Record<string, unknown>[]) {
+    if (!rows.length) return { rows, idRemap: new Map<string, string>() };
+    const { data, error } = await this.client.from("sites").select("id,bts_id");
+    if (error) throw error;
+    const existingByBts = new Map((data ?? []).map((row) => [String(row.bts_id), String(row.id)]));
+    const idRemap = new Map<string, string>();
+    const preparedRows = rows.map((row) => {
+      const existingId = existingByBts.get(String(row.bts_id ?? ""));
+      if (!existingId) return row;
+      const incomingId = String(row.id ?? "");
+      if (incomingId && incomingId !== existingId) idRemap.set(incomingId, existingId);
+      return { ...row, id: existingId };
+    });
+    return { rows: preparedRows, idRemap };
   }
 }
 
